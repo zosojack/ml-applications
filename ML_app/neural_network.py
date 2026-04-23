@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 from numba import njit
 from cost_functions import sigmoide
@@ -21,7 +23,8 @@ def SGD_algorithm(
     aggiorna ad ogni step!
     """
     
-    N, M = inputs.shape[1], weights.shape[0]
+    # numero di features
+    N, M = int(inputs.shape[1]), int(weights.shape[0])
     
     if N != M:
         raise ValueError(f"Il numero di features ({N})\
@@ -42,11 +45,32 @@ def SGD_algorithm(
         errore = expected_output[i] - output
         delta = output * (1-output) * errore
         
-        # correzione dei pesi
-        dweights = learning_rate * delta * sample
-        weights += dweights
+        # correzione dei pesi (srotolato per numba)
+        for j in range(N):
+            dweight = learning_rate * delta * sample[j]
+            weights[j] += dweight
         
     return weights
+
+@njit
+def neural_fit(
+    epoche: int,
+    weights: np.ndarray, 
+    inputs: np.ndarray,
+    expected_output: np.ndarray,
+    nn_learning_rate: float = 0.9,
+) -> np.ndarray:
+    
+    for i in range(epoche):
+            weights = SGD_algorithm(
+                weights,
+                inputs,
+                expected_output,
+                learning_rate=nn_learning_rate
+            )
+            
+    return weights
+    
 
 @njit
 def neural_predict(
@@ -79,78 +103,86 @@ def neural_predict(
         
     return output
 
-
-
-
-
-
+# mean squared error
 @njit
-def accuracy(
-    expected: np.ndarray,
-    prediction: np.ndarray,
-) -> float:
-    return 0
+def mse_loss_function(out, exp):
+    N = out.shape[0]
+    mse = 0
+    for i in range(N):
+        mse += (out[i]-exp[i])**2
+    return mse / N
 
+# binary cross-entropy
+@njit 
+def bce_loss_function(out, exp):
+    N = out.shape[0]
+    bce = 0
+  
+    return bce
 
 from sklearn.base import ClassifierMixin, BaseEstimator
+from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
+import numpy as np
 
-class neural_network(BaseEstimator):
-    
-    self.neural_network = None,
+class neural_network(BaseEstimator, ClassifierMixin):
     
     def __init__(
         self,
-        *,
-        epoche: int = 10_000,
+        epoche: int = 10000,
         loss: str = 'MSE',
         nn_learning_rate: float = 0.8,
-        random_state = None,
+        random_state = None
     ):
-        self.epoche = 10_000,
-        self.nn_learning_rate = nn_learning_rate,        
-        a = 0
+        # 1. attributi dell'estimator
+        self.epoche = epoche
+        self.nn_learning_rate = nn_learning_rate        
+        self.random_state = random_state
+        
+        self.loss = loss
+        # TODO: implementare la loss function binary cross-entropy
+        """
         if loss == 'MSE':
-            # definisci loss_func mse
-            a = 1
-            self.loss = loss,
-        elif loss == 'log':
-            # definisci loss_func mse
-            a = 2
+            self.loss = mse_loss_function
+        elif loss == 'BCE':
+            self.loss = bce_loss_function
         else:
-            # dai errore
-            raise ValueError(f"loss può essere 'MSE' o 'log', invece è '{loss}'")
-        
-        if random_state is not None:
-            np.random.seed(random_state)
+            raise ValueError(f"loss dev'essere 'MSE' o 'BCE', invece è {loss}")
+        """
         
         
+    def fit(self, X, y):
+        # 2. controllo validità input e conversione in numpy array (utile per pandas DataFrame)
+        X, y = check_X_y(X, y)
         
+        # 3. scikit-learn  vuole sapere quante classi sono definite
+        self.classes_ = np.unique(y)
         
-        def fit(self, X, y=None):
-            # inizializza pesi
-            N = X.shape[1]
-            weights = np.random.rand(N)
+        if self.random_state is not None:
+            np.random.seed(self.random_state)
             
-            for i in range(epoche):
-                weights = SGD_algorithm(
-                    weights,
-                    X,
-                    y,
-                    learning_rate = self.nn_learning_rate
-                )
-                
-            return self
-                
-        def predict(self, X):
-            return neural_predict
-            
+        N = X.shape[1]
         
-"""       
-...     def __init__(self, *, param=1):
-...         self.param = param
-...     def fit(self, X, y=None):
-...         self.is_fitted_ = True
-...         return self
-...     def predict(self, X):
-...         return np.full(shape=X.shape[0], fill_value=self.param)
-"""
+        # 4. inizializzazione randomica dei pesi
+        # NOTE: i parametri appresi vogliono l'underscore finale
+        self.weights_ = np.random.rand(N)
+        
+        # 5. algoritmo di stochastic gradient descent eseguito per ogni epoca
+        self.weights_ = neural_fit(
+            epoche=self.epoche,
+            weights=self.weights_,
+            inputs=X,
+            expected_output=y,
+            nn_learning_rate=self.nn_learning_rate,
+        )
+            
+        return self
+            
+    def predict(self, X):
+        # 6. controllo che il modello sia stato fittato
+        check_is_fitted(self)
+        
+        # verifica forma dell'input
+        X = check_array(X)
+        
+        # 7. funzione di predict
+        return neural_predict(self.weights_, X)
