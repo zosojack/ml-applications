@@ -133,7 +133,7 @@ class neural_network(BaseEstimator, ClassifierMixin):
         nn_learning_rate: float = 0.8,
         random_state = None
     ):
-        # 1. attributi dell'estimator
+        # attributi dell'estimator
         self.epoche = epoche
         self.nn_learning_rate = nn_learning_rate        
         self.random_state = random_state
@@ -151,10 +151,10 @@ class neural_network(BaseEstimator, ClassifierMixin):
         
         
     def fit(self, X, y):
-        # 2. controllo validità input e conversione in numpy array (utile per pandas DataFrame)
+        # controllo validità input e conversione in numpy array (utile per pandas DataFrame)
         X, y = check_X_y(X, y)
         
-        # 3. scikit-learn  vuole sapere quante classi sono definite
+        # scikit-learn  vuole sapere quante classi sono definite
         self.classes_ = np.unique(y)
         
         if self.random_state is not None:
@@ -162,11 +162,11 @@ class neural_network(BaseEstimator, ClassifierMixin):
             
         N = X.shape[1]
         
-        # 4. inizializzazione randomica dei pesi
+        # inizializzazione randomica dei pesi
         # NOTE: i parametri appresi vogliono l'underscore finale
         self.weights_ = np.random.rand(N)
         
-        # 5. algoritmo di stochastic gradient descent eseguito per ogni epoca
+        # algoritmo di stochastic gradient descent eseguito per ogni epoca
         self.weights_ = neural_fit(
             epoche=self.epoche,
             weights=self.weights_,
@@ -178,11 +178,11 @@ class neural_network(BaseEstimator, ClassifierMixin):
         return self
             
     def predict(self, X):
-        # 6. controllo che il modello sia stato fittato
+        # controllo che il modello sia stato fittato
         check_is_fitted(self)
         
         # verifica forma dell'input
         X = check_array(X)
         
-        # 7. funzione di predict
+        # funzione di predict
         return neural_predict(self.weights_, X)
