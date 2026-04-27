@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from numba import njit
-from cost_functions import sigmoide
+from cost_functions import sigmoide, sigmoide_deriv, tanh, tanh_deriv
 
 # per parametrizzarlo:
 # quante epoche?
@@ -14,7 +14,9 @@ def SGD_algorithm(
     weights: np.ndarray, 
     inputs: np.ndarray,
     expected_output: np.ndarray,
-    learning_rate: float = 0.9,
+    learning_rate: float,
+    activation: callable,
+    der_activation: callable
 ) -> np.ndarray:
     """
     Stochastic Gradient Descent Algorithm
@@ -38,12 +40,14 @@ def SGD_algorithm(
             lin_comb += weights[j]*sample[j]
         
         # calcolo l'output
-        output = sigmoide(lin_comb)
+        # output = sigmoide(lin_comb) NOTE: versione precedente che accettava solo sigmoide
+        output = activation(lin_comb)
         
         # funzione costo:  [expected_output - output()]^2
-        # output = sigmoide(lin_comb(w))
+        # output := sigmoide(lin_comb(w))
         errore = expected_output[i] - output
-        delta = output * (1-output) * errore
+        # delta = output * (1-output) * errore NOTE: versione precedente che accettava solo sigmoide
+        delta = der_activation(output) * errore
         
         # correzione dei pesi (srotolato per numba)
         for j in range(N):
@@ -58,7 +62,9 @@ def neural_fit(
     weights: np.ndarray, 
     inputs: np.ndarray,
     expected_output: np.ndarray,
-    nn_learning_rate: float = 0.9,
+    nn_learning_rate: float,
+    activation: callable,
+    der_activation: callable,
 ) -> np.ndarray:
     
     for i in range(epoche):
@@ -66,7 +72,9 @@ def neural_fit(
                 weights,
                 inputs,
                 expected_output,
-                learning_rate=nn_learning_rate
+                learning_rate=nn_learning_rate,
+                activation=activation,
+                der_activation=der_activation
             )
             
     return weights
@@ -76,6 +84,7 @@ def neural_fit(
 def neural_predict(
     weights: np.ndarray,
     inputs: np.ndarray,
+    activation: callable,
 ) -> np.ndarray:
     """
     Prediction della neural network
@@ -88,7 +97,7 @@ def neural_predict(
         raise ValueError(f"Il numero di features ({N})\
             non corrisponde al numero di pesi forniti ({M}).")
 
-    output = np.zeros(inputs.shape[0]) # 1 output per ogni sample
+    output = np.zeros(inputs.shape[0], dtype=np.int64) # 1 output per ogni sample
     
     # itero sui sample
     for i, sample in enumerate(inputs):
@@ -98,10 +107,44 @@ def neural_predict(
             lin_comb += weights[j]*sample[j]
         
         # calcolo l'output
-        #output[i] = sigmoide(lin_comb)
-        output[i] = 0 if sigmoide(lin_comb) < 0.5 else 1
+        # output[i] = 0 if sigmoide(lin_comb) < 0.5 else 1 NOTE: VERSIONE PRECEDENTE
+        output[i] = 0 if activation(lin_comb) < 0.5 else 1 
         
     return output
+
+@njit
+def neural_predict_proba(
+    weights: np.ndarray,
+    inputs: np.ndarray,
+    activation: callable,
+) -> np.ndarray:
+    """
+    Prediction della neural network
+    Da lanciare solo dopo aver trainato il modello e fissato i pesi.
+    """
+    
+    N, M = inputs.shape[1], weights.shape[0]
+    
+    if N != M:
+        raise ValueError(f"Il numero di features ({N})\
+            non corrisponde al numero di pesi forniti ({M}).")
+        
+    # 2 output per ogni sample: (p, 1-p)
+    proba = np.zeros((inputs.shape[0],2), dtype=np.float64) 
+    
+    # itero sui sample
+    for i, sample in enumerate(inputs):
+        # costruisco la combinazione lineare
+        lin_comb = 0 
+        for j in range(N):
+            lin_comb += weights[j]*sample[j]
+        
+        # calcolo l'output
+        p = activation(lin_comb)
+        proba[i, 0] = p
+        proba[i, 1] = 1-p 
+        
+    return proba
 
 # mean squared error
 @njit
@@ -124,20 +167,29 @@ from sklearn.base import ClassifierMixin, BaseEstimator
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 import numpy as np
 
-class neural_network(BaseEstimator, ClassifierMixin):
+class neural_network(ClassifierMixin, BaseEstimator):
+    
+    # per VotingClassifier
+    _estimator_type='classifier'
     
     def __init__(
         self,
         epoche: int = 10000,
-        loss: str = 'MSE',
+        loss: str = None, #'MSE',
         nn_learning_rate: float = 0.8,
-        random_state = None
+        random_state = None,
+        activation_function: str = 'sigmoide',
     ):
         # attributi dell'estimator
         self.epoche = epoche
         self.nn_learning_rate = nn_learning_rate        
         self.random_state = random_state
         
+        self.activation_function = activation_function
+        self.activation = None
+        self.der_activation = None
+        self.activation_is_assigned_ = False
+
         self.loss = loss
         # TODO: implementare la loss function binary cross-entropy
         """
@@ -148,9 +200,34 @@ class neural_network(BaseEstimator, ClassifierMixin):
         else:
             raise ValueError(f"loss dev'essere 'MSE' o 'BCE', invece è {loss}")
         """
-        
+    
+    # per VotingClassifier
+    def _get_tags(self):
+        tags = super()._get_tags()
+        tags['binary_only'] = True
+        return tags
+    
+    # per VotingClassifier:
+    def _more_tags(self):
+        return {'classifier': True}
+    
+    def _assign_activation(self):
+        if self.activation_function == 'sigmoide':
+            self.activation = sigmoide
+            self.der_activation = sigmoide_deriv
+        elif self.activation_function == 'tanh':
+            self.activation = tanh
+            self.der_activation = tanh_deriv
+        else:
+            raise ValueError(f"{self.activation_function} non è una funzione di costo valida\n \
+                le opzioni valide sono 'sigmoide' e 'tanh'")
+        self.activation_is_assigned_ = True
         
     def fit(self, X, y):
+        
+        # assegno la funzione di attivazione dell'estimator
+        self._assign_activation()
+        
         # controllo validità input e conversione in numpy array (utile per pandas DataFrame)
         X, y = check_X_y(X, y)
         
@@ -173,6 +250,8 @@ class neural_network(BaseEstimator, ClassifierMixin):
             inputs=X,
             expected_output=y,
             nn_learning_rate=self.nn_learning_rate,
+            activation=self.activation,
+            der_activation=self.der_activation
         )
             
         return self
@@ -185,4 +264,24 @@ class neural_network(BaseEstimator, ClassifierMixin):
         X = check_array(X)
         
         # funzione di predict
-        return neural_predict(self.weights_, X)
+        return neural_predict(
+            self.weights_, 
+            X, 
+            activation=self.activation,
+        )
+    
+    # NOTE: FUNZIONA SOLO PER SIGMOIDE!
+    def predict_proba(self, X):
+        # controllo che il modello sia stato fittato
+        check_is_fitted(self)
+        
+        # verifica forma dell'input
+        X = check_array(X)
+        
+        # funzione di predict
+        return neural_predict_proba(
+            self.weights_, 
+            X, 
+            activation=self.activation,
+        )
+        
