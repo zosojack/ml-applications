@@ -4,11 +4,6 @@ import numpy as np
 from numba import njit
 from cost_functions import sigmoide, sigmoide_deriv, tanh, tanh_deriv
 
-# per parametrizzarlo:
-# quante epoche?
-# quanto learning rate?
-# hai usato ending step o criterio di convergenza?
-
 @njit
 def SGD_algorithm(
     weights: np.ndarray, 
@@ -32,6 +27,8 @@ def SGD_algorithm(
         raise ValueError(f"Il numero di features ({N})\
             non corrisponde al numero di pesi forniti ({M}).")
     
+    errore = 0
+    
     # itero sui sample
     for i, sample in enumerate(inputs):
         # costruisco la combinazione lineare
@@ -54,7 +51,7 @@ def SGD_algorithm(
             dweight = learning_rate * delta * sample[j]
             weights[j] += dweight
         
-    return weights
+    return weights, errore
 
 @njit
 def neural_fit(
@@ -67,17 +64,21 @@ def neural_fit(
     der_activation: callable,
 ) -> np.ndarray:
     
+    errors = np.zeros(epoche)
+    
     for i in range(epoche):
-            weights = SGD_algorithm(
-                weights,
-                inputs,
-                expected_output,
-                learning_rate=nn_learning_rate,
-                activation=activation,
-                der_activation=der_activation
-            )
+        weights, last_error = SGD_algorithm(
+            weights,
+            inputs,
+            expected_output,
+            learning_rate=nn_learning_rate,
+            activation=activation,
+            der_activation=der_activation
+        )
+        
+        errors[i] = last_error    
             
-    return weights
+    return weights, errors
     
 
 @njit
@@ -129,7 +130,7 @@ def neural_predict_proba(
         raise ValueError(f"Il numero di features ({N})\
             non corrisponde al numero di pesi forniti ({M}).")
         
-    # 2 output per ogni sample: (p, 1-p)
+    # 2 output per ogni sample: (1-p, p)
     proba = np.zeros((inputs.shape[0],2), dtype=np.float64) 
     
     # itero sui sample
@@ -141,12 +142,12 @@ def neural_predict_proba(
         
         # calcolo l'output
         p = activation(lin_comb)
-        proba[i, 0] = p
-        proba[i, 1] = 1-p 
+        proba[i, 0] = 1-p
+        proba[i, 1] = p 
         
     return proba
 
-# mean squared error
+# mean squared error TODO
 @njit
 def mse_loss_function(out, exp):
     N = out.shape[0]
@@ -155,7 +156,7 @@ def mse_loss_function(out, exp):
         mse += (out[i]-exp[i])**2
     return mse / N
 
-# binary cross-entropy
+# binary cross-entropy TODO
 @njit 
 def bce_loss_function(out, exp):
     N = out.shape[0]
@@ -179,6 +180,7 @@ class neural_network(ClassifierMixin, BaseEstimator):
         nn_learning_rate: float = 0.8,
         random_state = None,
         activation_function: str = 'sigmoide',
+        return_errors: bool = False,
     ):
         # attributi dell'estimator
         self.epoche = epoche
@@ -189,6 +191,8 @@ class neural_network(ClassifierMixin, BaseEstimator):
         self.activation = None
         self.der_activation = None
         self.activation_is_assigned_ = False
+        
+        self.return_errors = return_errors
 
         self.loss = loss
         # TODO: implementare la loss function binary cross-entropy
@@ -212,6 +216,7 @@ class neural_network(ClassifierMixin, BaseEstimator):
         return {'classifier': True}
     
     def _assign_activation(self):
+        """ Permette di selezionare tra due diverse funzioni di attivazione """
         if self.activation_function == 'sigmoide':
             self.activation = sigmoide
             self.der_activation = sigmoide_deriv
@@ -224,6 +229,7 @@ class neural_network(ClassifierMixin, BaseEstimator):
         self.activation_is_assigned_ = True
         
     def fit(self, X, y):
+        """ Metodo che si occupa di addestrare il modello """
         
         # assegno la funzione di attivazione dell'estimator
         self._assign_activation()
@@ -244,7 +250,7 @@ class neural_network(ClassifierMixin, BaseEstimator):
         self.weights_ = np.random.rand(N)
         
         # algoritmo di stochastic gradient descent eseguito per ogni epoca
-        self.weights_ = neural_fit(
+        self.weights_, errors = neural_fit(
             epoche=self.epoche,
             weights=self.weights_,
             inputs=X,
@@ -253,10 +259,14 @@ class neural_network(ClassifierMixin, BaseEstimator):
             activation=self.activation,
             der_activation=self.der_activation
         )
-            
-        return self
+        
+        if self.return_errors:
+            return errors
+        else:
+            return self
             
     def predict(self, X):
+        """ Metodo che si occupa di classificare """
         # controllo che il modello sia stato fittato
         check_is_fitted(self)
         
@@ -270,7 +280,7 @@ class neural_network(ClassifierMixin, BaseEstimator):
             activation=self.activation,
         )
     
-    # NOTE: FUNZIONA SOLO PER SIGMOIDE!
+    # NOTE: FUNZIONA SOLO PER ACTIVATION SIGMOIDE!
     def predict_proba(self, X):
         # controllo che il modello sia stato fittato
         check_is_fitted(self)
