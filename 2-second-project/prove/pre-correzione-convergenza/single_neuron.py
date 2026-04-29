@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from numba import njit
-from cost_functions import sigmoide, sigmoide_deriv, tanh, tanh_deriv
+from ML_app.cost_functions import sigmoide, sigmoide_deriv, tanh, tanh_deriv, ReLU, ReLU_deriv
 
 @njit
 def SGD_algorithm(
@@ -27,7 +27,7 @@ def SGD_algorithm(
         raise ValueError(f"Il numero di features ({N})\
             non corrisponde al numero di pesi forniti ({M}).")
     
-    errore = 0
+    somma_errori = 0
     
     # itero sui sample
     for i, sample in enumerate(inputs):
@@ -50,8 +50,11 @@ def SGD_algorithm(
         for j in range(N):
             dweight = learning_rate * delta * sample[j]
             weights[j] += dweight
-        
-    return weights, errore
+            
+        somma_errori += errore**2
+    mse = somma_errori / N
+    
+    return weights, mse
 
 @njit
 def neural_fit(
@@ -62,11 +65,36 @@ def neural_fit(
     nn_learning_rate: float,
     activation: callable,
     der_activation: callable,
+    convergence_tol: float,
 ) -> np.ndarray:
+    """
+    Esegue l'algoritmo SGD fino a raggiungimento della convergenza, oppure fino ad un endstep.
+    """
     
-    errors = np.zeros(epoche)
+    # Inizializzazione variabili utili alla logica di convergenza
+    mse = np.zeros((epoche // 1000) + 1) # un valore ogni mille
+    ultimi_dieci_errori = np.zeros(10)
+    somma_errori = 0
+    convergence_idx = epoche
+    # poichè valuto la convergenza in base agli ultimi 10 step
+    tol = 10*convergence_tol
     
-    for i in range(epoche):
+    # Ciclo iniziale di SGD per fissare una somma di errori
+    for i in range(10):
+        weights, last_error = SGD_algorithm(
+            weights,
+            inputs,
+            expected_output,
+            learning_rate=nn_learning_rate,
+            activation=activation,
+            der_activation=der_activation
+        )
+        # accumulo i primi 10 errori
+        ultimi_dieci_errori[i] = last_error
+        somma_errori += last_error
+    
+    # Ciclo reale
+    for i in range(10, epoche):
         weights, last_error = SGD_algorithm(
             weights,
             inputs,
@@ -76,9 +104,21 @@ def neural_fit(
             der_activation=der_activation
         )
         
-        errors[i] = last_error    
+        # aggiorno la somma degli ultimi 10 errori
+        idx_vecchio = i % 10
+        somma_errori = somma_errori - ultimi_dieci_errori[idx_vecchio] + last_error
+        
+        # aggiorno ciclicamente l'array degli ultimi 10 errori
+        ultimi_dieci_errori[idx_vecchio] = last_error
+         
+        if i % 1000 == 0:
+            mse[i // 1000] = last_error 
+        
+        if  somma_errori < tol:
+            convergence_idx = i
+            break
             
-    return weights, errors
+    return weights, mse, convergence_idx
     
 
 @njit
@@ -120,8 +160,9 @@ def neural_predict_proba(
     activation: callable,
 ) -> np.ndarray:
     """
-    Prediction della neural network
+    Prediction della neural network.
     Da lanciare solo dopo aver trainato il modello e fissato i pesi.
+    Restituisce la probabilità della predizione. 
     """
     
     N, M = inputs.shape[1], weights.shape[0]
@@ -166,21 +207,22 @@ def bce_loss_function(out, exp):
 
 from sklearn.base import ClassifierMixin, BaseEstimator
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
-import numpy as np
 
-class neural_network(ClassifierMixin, BaseEstimator):
+class single_neuron(ClassifierMixin, BaseEstimator):
     
     # per VotingClassifier
     _estimator_type='classifier'
     
     def __init__(
         self,
-        epoche: int = 10000,
+        *,
+        epoche: int = 10_000,
         loss: str = None, #'MSE',
         nn_learning_rate: float = 0.8,
         random_state = None,
         activation_function: str = 'sigmoide',
         return_errors: bool = False,
+        convergence_tol = 0,
     ):
         # attributi dell'estimator
         self.epoche = epoche
@@ -193,6 +235,7 @@ class neural_network(ClassifierMixin, BaseEstimator):
         self.activation_is_assigned_ = False
         
         self.return_errors = return_errors
+        self.convergence_tol = convergence_tol
 
         self.loss = loss
         # TODO: implementare la loss function binary cross-entropy
@@ -223,9 +266,12 @@ class neural_network(ClassifierMixin, BaseEstimator):
         elif self.activation_function == 'tanh':
             self.activation = tanh
             self.der_activation = tanh_deriv
+        elif self.activation_function == 'ReLU':
+            self.activation = ReLU
+            self.der_activation = ReLU_deriv
         else:
             raise ValueError(f"{self.activation_function} non è una funzione di costo valida\n \
-                le opzioni valide sono 'sigmoide' e 'tanh'")
+                le opzioni valide sono 'sigmoide', 'tanh' e 'ReLU'")
         self.activation_is_assigned_ = True
         
     def fit(self, X, y):
@@ -240,30 +286,36 @@ class neural_network(ClassifierMixin, BaseEstimator):
         # scikit-learn  vuole sapere quante classi sono definite
         self.classes_ = np.unique(y)
         
+        # assegno seed se fornito in costruzione
         if self.random_state is not None:
             np.random.seed(self.random_state)
-            
-        N = X.shape[1]
-        
+                
         # inizializzazione randomica dei pesi
         # NOTE: i parametri appresi vogliono l'underscore finale
+        N = X.shape[1]
         self.weights_ = np.random.rand(N)
         
-        # algoritmo di stochastic gradient descent eseguito per ogni epoca
-        self.weights_, errors = neural_fit(
+        # l'algoritmo di stochastic gradient descent aggiorna i pesi
+        self.weights_, errors, convergence_idx = neural_fit(
             epoche=self.epoche,
             weights=self.weights_,
             inputs=X,
             expected_output=y,
             nn_learning_rate=self.nn_learning_rate,
             activation=self.activation,
-            der_activation=self.der_activation
+            der_activation=self.der_activation,
+            convergence_tol=self.convergence_tol
         )
-        
+                    
+        # logica di convergenza
+        self._has_converged = True if convergence_idx < self.epoche else False
+        self._convergence_idx = convergence_idx # inizializzato a epoche
+            
+        # immaganizzazione degli errori
         if self.return_errors:
-            return errors
-        else:
-            return self
+            self.errors_ = errors[:int(self._convergence_idx/1000)]
+            
+        return self
             
     def predict(self, X):
         """ Metodo che si occupa di classificare """

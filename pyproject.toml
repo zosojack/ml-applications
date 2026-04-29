@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ml_app_package"
+version = "0.1.0"
+description = "I miei moduli personalizzati per il Machine Learning"
+dependencies = [
+    "numpy",
+    "scikit-learn",
+    "numba"
+]
+
+[tool.setuptools.packages.find]
+include = ["ML_app*"]
