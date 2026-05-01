@@ -60,6 +60,8 @@ def SGD(
     * Stochastic Gradient Descent Algorithm *
     Un sample alla volta, primo e secondo layer valutano le features.
     Prima di passare al prossimo sample, i pesi vengono ritarati.
+    Tutorial bakpropagation per due layer:
+    https://medium.com/@hoangngbot/code-a-2-layer-neural-network-from-scratch-33d7db0f0e5f
     '''
     S, N = X.shape # samples, features
     M = W2.shape[0] # numero neuroni layer 1
@@ -101,11 +103,15 @@ def SGD(
 
 @njit
 def check_convergence_patience(
-    mse_now,
-    mse_before,
-    tol,
-    patience
+    mse_now: float,
+    mse_before: float,
+    tol: float,
+    patience: int
 ) -> int:
+    """
+    Tutorial convergence patience-based:
+    https://medium.com/@mbonsign/iterative-refinement-breaking-through-convergence-plateaus-in-neural-language-models-f8eb03e04cb7
+    """
     diff = (mse_before - mse_now) / mse_before
     
     if diff < tol: # se migliora meno del valore di tolleranza
