@@ -6,8 +6,8 @@ def sigmoide(x):
     return 1 / (1 + np.exp(-x))
 
 @njit(cache=True)
-def sigmoide_deriv(x):
-    return x * (1.0 - x)
+def sigmoide_deriv(s):
+    return s * (1.0 - s)
 
 @njit(cache=True)
 def tanh(x):

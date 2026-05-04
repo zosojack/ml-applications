@@ -356,5 +356,3 @@ class couple_neurons(ClassifierMixin, BaseEstimator):
             X, 
             activation=self.activation,
         )
-    
-    
